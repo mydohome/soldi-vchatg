@@ -45,5 +45,16 @@ jobs:
           assert len(request('export')['entries'])==1
           print('API e persistenza OK')
           PY
+          npm install --no-save playwright
+          npx playwright install --with-deps chromium
+          mkdir -p screenshots
+          node screenshot-test.js
         env:
           COMPOSE_FILE: compose.yaml:compose.ci.yaml
+      - name: Conserva screenshot
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: screenshot-layout
+          path: screenshots/*.png
+          if-no-files-found: ignore
