@@ -26,8 +26,16 @@ async function login(context) {
   await page.locator('#quick').click();
   await page.locator('#editor').waitFor({state:'visible'});
   await page.screenshot({path:'screenshots/iphone-nuova-spesa.png',fullPage:true});
+  const personalColor=await page.locator('.scope-personal span').evaluate(el=>getComputedStyle(el).backgroundColor);
+  await page.locator('.scope-household span').click();
+  const houseColor=await page.locator('.scope-household span').evaluate(el=>getComputedStyle(el).backgroundColor);
+  if (personalColor===houseColor || !await page.locator('[name=scope][value=household]').isChecked()) throw Error('Switch ambito non funziona');
+  await page.screenshot({path:'screenshots/iphone-casa.png',fullPage:true});
   const save=await page.locator('#entryForm > button:last-child').boundingBox();
   if (!save || save.y+save.height>devices['iPhone 13'].viewport.height) throw Error('Pulsante Salva non visibile su iPhone');
+  await page.locator('#close').click();
+  await page.locator('[data-page=settings]').click();
+  await page.screenshot({path:'screenshots/iphone-impostazioni.png',fullPage:true});
   if (errors.length) throw Error(errors.join('\n'));
   await browser.close();
   const desktop=await chromium.launch({headless:true});
