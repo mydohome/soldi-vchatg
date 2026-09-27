@@ -1,0 +1,5 @@
+.env
+compose.override.yaml
+__pycache__/
+*.sqlite3*
+testdata/

@@ -1,0 +1,18 @@
+services:
+  app:
+    build: .
+    restart: unless-stopped
+    environment:
+      DATA_DIR: /data
+      TZ: Europe/Rome
+    volumes:
+      - spese_data:/data
+    networks:
+      - proxy
+    # NPM su altro host: setup.sh aggiunge la porta in compose.override.yaml
+volumes:
+  spese_data:
+networks:
+  proxy:
+    external: true
+    name: ${PROXY_NETWORK}
