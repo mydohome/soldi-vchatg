@@ -32,3 +32,13 @@ Password archiviate con PBKDF2-HMAC-SHA256 e sale casuale; sessioni in cookie Ht
 ## Test automatici
 
 Il workflow GitHub Actions `.github/workflows/test.yml` controlla la sintassi, costruisce l'immagine e avvia Compose con un test HTTP di accesso, movimento e backup. Usa un runner Linux standard e non pubblica l'app.
+
+## Aggiornamenti
+
+Dalla cartella del repository sul server:
+
+```sh
+./update.sh
+```
+
+Lo script richiede il branch `main`, una copia Git senza modifiche ai file tracciati, `.env` e Docker Compose v2. Controlla `origin/main`, applica solo un avanzamento lineare, ricostruisce lo stack e verifica HTTP e database tramite `/api/health`. Se la nuova versione non si avvia o non risponde entro circa un minuto, riporta codice e container al commit precedente e restituisce un errore. Un ripristino del codice non annulla eventuali migrazioni del database: conserva sempre un backup prima di aggiornamenti importanti. Se non ci sono novità, non riavvia i container.

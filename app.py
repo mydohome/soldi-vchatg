@@ -78,6 +78,11 @@ class Handler(BaseHTTPRequestHandler):
    name='index.html' if path=='/' else path[8:]
    if name not in ('index.html','app.js','style.css','manifest.json'):self.send_error(404);return
    data=(ROOT/'static'/name).read_bytes(); self.send_response(200); self.send_header('Content-Type',{'html':'text/html; charset=utf-8','js':'text/javascript; charset=utf-8','css':'text/css; charset=utf-8','json':'application/manifest+json'}[name.split('.')[-1]]);self.send_header('Content-Length',str(len(data)));self.end_headers();self.wfile.write(data);return
+  if path=='/api/health':
+   try:
+    with connect() as c: c.execute('SELECT 1').fetchone()
+    return self.respond({'status':'ok'})
+   except sqlite3.Error: return self.respond({'status':'error'},503)
   with connect() as c:
    u=self.user(c)
    if not u:return self.respond({'error':'Accesso richiesto'},401)

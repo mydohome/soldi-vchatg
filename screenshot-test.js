@@ -1,6 +1,6 @@
 const { chromium, devices } = require('playwright');
 async function login(context) {
-  const response=await context.request.post('http://localhost:18080/api/login',{data:{username:'admin',password:'password-di-test-lunga'}});
+  const response=await context.request.post('http://localhost:18080/api/login',{data:{username:'admin',password:process.env.CI_PASSWORD}});
   if (!response.ok()) throw Error('Login failed');
   const token=response.headers()['set-cookie'].match(/spese_session=([^;]+)/)[1];
   await context.addCookies([{name:'spese_session',value:token,url:'http://localhost:18080',httpOnly:true,sameSite:'Lax'}]);

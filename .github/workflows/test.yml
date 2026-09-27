@@ -17,10 +17,11 @@ jobs:
         run: docker build -t spese:test .
       - name: Avvio e test API
         run: |
+          export CI_PASSWORD="$(openssl rand -hex 24)"
           docker network create spese_ci
           printf 'PROXY_NETWORK=spese_ci\nINSTALL_KEY=ci-test-key\n' > .env
           docker compose build
-          docker compose run --rm -T app python /app/app.py create-user admin 'password-di-test-lunga' '' 1
+          docker compose run --rm -T app python /app/app.py create-user admin "$CI_PASSWORD" '' 1
           docker compose up -d
           trap 'docker compose logs app; docker compose down -v; docker network rm spese_ci' EXIT
           for i in $(seq 1 30); do
@@ -29,14 +30,14 @@ jobs:
           done
           curl -fsS http://localhost:18080/ >/dev/null
           python3 - <<'PY'
-          import json,urllib.request
+          import json,urllib.request,os
           cookie=''
           base='http://localhost:18080/api/'
           def request(path,data=None):
               raw=json.dumps(data).encode() if data is not None else None
               req=urllib.request.Request(base+path,raw,headers={'Content-Type':'application/json','Cookie':cookie})
               return json.load(urllib.request.urlopen(req))
-          raw=json.dumps({'username':'admin','password':'password-di-test-lunga'}).encode()
+          raw=json.dumps({'username':'admin','password':os.environ['CI_PASSWORD']}).encode()
           response=urllib.request.urlopen(urllib.request.Request(base+'login',raw,headers={'Content-Type':'application/json'}))
           cookie=response.headers['Set-Cookie'].split(';')[0]
           s=request('state'); assert s['user']['username']=='admin'
@@ -49,6 +50,28 @@ jobs:
           npx playwright install --with-deps chromium
           mkdir -p screenshots
           node screenshot-test.js
+          # Prova un aggiornamento reale da un remote Git locale e un rollback su build fallita.
+          git switch -C main
+          git init --bare "$RUNNER_TEMP/spese-remote.git"
+          git --git-dir="$RUNNER_TEMP/spese-remote.git" symbolic-ref HEAD refs/heads/main
+          git remote set-url origin "$RUNNER_TEMP/spese-remote.git"
+          git push -u origin main
+          git clone "$RUNNER_TEMP/spese-remote.git" "$RUNNER_TEMP/spese-upstream"
+          git -C "$RUNNER_TEMP/spese-upstream" config user.name "CI"
+          git -C "$RUNNER_TEMP/spese-upstream" config user.email "ci@example.invalid"
+          printf '\nUpdate smoke test.\n' >> "$RUNNER_TEMP/spese-upstream/README.md"
+          git -C "$RUNNER_TEMP/spese-upstream" add README.md
+          git -C "$RUNNER_TEMP/spese-upstream" commit -m 'Test aggiornamento'
+          git -C "$RUNNER_TEMP/spese-upstream" push origin main
+          ./update.sh
+          good=$(git rev-parse HEAD)
+          sed -i '1cFROM invalid.invalid/nonexistent:never' "$RUNNER_TEMP/spese-upstream/Dockerfile"
+          git -C "$RUNNER_TEMP/spese-upstream" add Dockerfile
+          git -C "$RUNNER_TEMP/spese-upstream" commit -m 'Test rollback'
+          git -C "$RUNNER_TEMP/spese-upstream" push origin main
+          if ./update.sh; then echo 'Rollback atteso non avvenuto'; exit 1; fi
+          test "$(git rev-parse HEAD)" = "$good"
+          docker compose exec -T app python -c "import urllib.request; assert urllib.request.urlopen('http://127.0.0.1:8080/api/health').status==200"
         env:
           COMPOSE_FILE: compose.yaml:compose.ci.yaml
       - name: Conserva screenshot
