@@ -26,7 +26,7 @@ async function login(context) {
   await page.locator('#quick').click();
   await page.locator('#editor').waitFor({state:'visible'});
   await page.screenshot({path:'screenshots/iphone-nuova-spesa.png',fullPage:true});
-  const save=await page.locator('#entryForm button:last-child').boundingBox();
+  const save=await page.locator('#entryForm > button:last-child').boundingBox();
   if (!save || save.y+save.height>devices['iPhone 13'].viewport.height) throw Error('Pulsante Salva non visibile su iPhone');
   if (errors.length) throw Error(errors.join('\n'));
   await browser.close();
