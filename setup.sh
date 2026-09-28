@@ -19,9 +19,7 @@ read -r mode
 case "$mode" in
   1)
     deploy_mode=lan-http
-    printf 'Porta HTTP LAN [8088]: '; read -r port; port=${port:-8088}
-    case "$port" in *[!0-9]*|'') echo 'Porta non valida'; exit 1;; esac
-    [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || { echo 'Porta non valida'; exit 1; }
+    port=$(choose_port 'Porta HTTP LAN')
     network=spese_internal
     docker network inspect "$network" >/dev/null 2>&1 || docker network create "$network" >/dev/null
     printf 'services:\n  app:\n    ports:\n      - "%s:8080"\n' "$port" > compose.override.yaml
@@ -36,9 +34,7 @@ case "$mode" in
     ;;
   3)
     deploy_mode=npm-remote
-    printf 'Porta sull host Docker [8088]: '; read -r port; port=${port:-8088}
-    case "$port" in *[!0-9]*|'') echo 'Porta non valida'; exit 1;; esac
-    [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || { echo 'Porta non valida'; exit 1; }
+    port=$(choose_port 'Porta sull host Docker')
     network=spese_internal
     docker network inspect "$network" >/dev/null 2>&1 || docker network create "$network" >/dev/null
     printf 'services:\n  app:\n    ports:\n      - "%s:8080"\n' "$port" > compose.override.yaml
