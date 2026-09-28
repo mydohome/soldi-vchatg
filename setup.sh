@@ -3,28 +3,77 @@ set -eu
 cd "$(dirname "$0")"
 command -v docker >/dev/null 2>&1 || { echo 'Docker non trovato'; exit 1; }
 docker compose version >/dev/null 2>&1 || { echo 'Docker Compose non trovato'; exit 1; }
-[ ! -e .env ] || { echo '.env esiste già: installazione già inizializzata'; exit 1; }
-printf 'Tipo installazione: 1) NPM su rete Docker  2) NPM su altro host\nScelta [1/2]: '
+
+existing=0; old_key=''; old_mode=''
+if [ -f .env ]; then
+  existing=1
+  old_key=$(sed -n 's/^INSTALL_KEY=//p' .env | head -n1)
+  old_mode=$(sed -n 's/^DEPLOY_MODE=//p' .env | head -n1)
+  echo "Installazione esistente rilevata (modalità: ${old_mode:-non registrata})."
+  echo 'Utenti e dati nel volume Docker saranno mantenuti.'
+fi
+[ -n "$old_key" ] || old_key="$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')"
+
+printf '\nModalità di accesso:\n  1) Test in LAN via HTTP\n  2) NPM sulla stessa macchina/rete Docker\n  3) NPM su altro host\nScelta [1/2/3]: '
 read -r mode
-case "$mode" in 1) printf 'Nome rete Docker condivisa con NPM [npm_proxy]: '; read -r network; network=${network:-npm_proxy}; docker network inspect "$network" >/dev/null 2>&1 || { echo 'Rete non trovata';exit 1; }; printf 'PROXY_NETWORK=%s\nINSTALL_KEY=%s\n' "$network" "$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')" > .env; cat > compose.override.yaml <<'EOF'
-services: {}
-EOF
- echo 'In NPM usa il nome host app e la porta 8080 sulla rete condivisa.';;
- 2) printf 'Porta sull’host Docker [8088]: '; read -r port; port=${port:-8088}; case "$port" in *[!0-9]*|'') echo 'Porta non valida';exit 1;; esac; [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || { echo 'Porta non valida';exit 1; }; network=spese_internal; docker network inspect "$network" >/dev/null 2>&1 || docker network create "$network" >/dev/null; printf 'PROXY_NETWORK=%s\nINSTALL_KEY=%s\n' "$network" "$(od -An -N32 -tx1 /dev/urandom | tr -d ' \n')" > .env; cat > compose.override.yaml <<EOF
-services:
-  app:
-    ports:
-      - "${port}:8080"
-EOF
- echo "In NPM sull'altro host usa l'IP del server Docker e la porta $port. Limita l'accesso alla porta con il firewall.";;
- *) echo 'Scelta non valida';exit 1;;esac
+case "$mode" in
+  1)
+    deploy_mode=lan-http
+    printf 'Porta HTTP LAN [8088]: '; read -r port; port=${port:-8088}
+    case "$port" in *[!0-9]*|'') echo 'Porta non valida'; exit 1;; esac
+    [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || { echo 'Porta non valida'; exit 1; }
+    network=spese_internal
+    docker network inspect "$network" >/dev/null 2>&1 || docker network create "$network" >/dev/null
+    printf 'services:\n  app:\n    ports:\n      - "%s:8080"\n' "$port" > compose.override.yaml
+    message="Accesso LAN: http://IP_DEL_SERVER:$port"
+    ;;
+  2)
+    deploy_mode=npm-docker
+    printf 'Nome rete Docker condivisa con NPM [npm_proxy]: '; read -r network; network=${network:-npm_proxy}
+    docker network inspect "$network" >/dev/null 2>&1 || { echo "Rete Docker '$network' non trovata."; exit 1; }
+    printf 'services: {}\n' > compose.override.yaml
+    message='In NPM usa come upstream app:8080 sulla rete Docker condivisa.'
+    ;;
+  3)
+    deploy_mode=npm-remote
+    printf 'Porta sull host Docker [8088]: '; read -r port; port=${port:-8088}
+    case "$port" in *[!0-9]*|'') echo 'Porta non valida'; exit 1;; esac
+    [ "$port" -ge 1 ] && [ "$port" -le 65535 ] || { echo 'Porta non valida'; exit 1; }
+    network=spese_internal
+    docker network inspect "$network" >/dev/null 2>&1 || docker network create "$network" >/dev/null
+    printf 'services:\n  app:\n    ports:\n      - "%s:8080"\n' "$port" > compose.override.yaml
+    message="In NPM usa IP del server Docker e porta $port; limita la porta via firewall al solo host NPM."
+    ;;
+  *) echo 'Scelta non valida'; exit 1;;
+esac
+
+printf 'PROXY_NETWORK=%s\nINSTALL_KEY=%s\nDEPLOY_MODE=%s\n' "$network" "$old_key" "$deploy_mode" > .env
 chmod 600 .env
-printf 'Nome del primo utente: '; read -r username
-printf 'Email facoltativa: '; read -r email
-printf 'Password del primo utente (minimo 12 caratteri, input nascosto): '
-stty -echo; read -r password; stty echo; printf '\n'
-[ "${#username}" -ge 3 ] && [ "${#password}" -ge 12 ] || { echo 'Credenziali non valide; ripeti setup dopo aver rimosso .env e compose.override.yaml';exit 1; }
+
 docker compose build
-docker compose run --rm -T -e FIRST_USERNAME="$username" -e FIRST_EMAIL="$email" -e FIRST_PASSWORD="$password" app sh -c 'python /app/app.py create-user "$FIRST_USERNAME" "$FIRST_PASSWORD" "$FIRST_EMAIL" 1'
-docker compose up -d
-echo 'Installazione completata. Configura NPM con HTTPS e Websockets disattivato.'
+if [ "$existing" -eq 0 ]; then
+  printf 'Nome del primo utente: '; read -r username
+  printf 'Email facoltativa: '; read -r email
+  printf 'Password del primo utente (minimo 12 caratteri, input nascosto): '
+  stty -echo; read -r password; stty echo; printf '\n'
+  [ "${#username}" -ge 3 ] && [ "${#password}" -ge 12 ] || { echo 'Credenziali non valide; correggi e rilancia setup.sh.'; exit 1; }
+  docker compose run --rm -T -e FIRST_USERNAME="$username" -e FIRST_EMAIL="$email" -e FIRST_PASSWORD="$password" app sh -c 'python /app/app.py create-user "$FIRST_USERNAME" "$FIRST_PASSWORD" "$FIRST_EMAIL" 1'
+else
+  echo 'Riconfigurazione: creazione utente iniziale saltata.'
+fi
+
+docker compose up -d --remove-orphans
+echo 'Attendo il controllo di integrità...'
+i=0
+while [ "$i" -lt 12 ]; do
+  if docker compose exec -T app python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8080/api/health', timeout=3).read()" >/dev/null 2>&1; then
+    echo 'Configurazione completata e applicazione operativa.'
+    echo "$message"
+    [ "$deploy_mode" = "lan-http" ] && echo 'ATTENZIONE: HTTP è previsto per test in LAN; per uso normale preferisci HTTPS dietro NPM.'
+    exit 0
+  fi
+  i=$((i + 1)); sleep 5
+done
+echo 'ERRORE: stack avviato ma health check HTTP interno non riuscito.'
+docker compose ps
+exit 1
