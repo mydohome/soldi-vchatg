@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS accounts(id INTEGER PRIMARY KEY,user_id INTEGER NOT N
 CREATE TABLE IF NOT EXISTS categories(id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,name TEXT NOT NULL,kind TEXT NOT NULL CHECK(kind IN ('expense','income')));
 CREATE TABLE IF NOT EXISTS entries(id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,account_id INTEGER NOT NULL REFERENCES accounts(id),category_id INTEGER NOT NULL REFERENCES categories(id),kind TEXT NOT NULL CHECK(kind IN ('expense','income')),scope TEXT NOT NULL CHECK(scope IN ('personal','household')),amount_cents INTEGER NOT NULL CHECK(amount_cents>0),description TEXT NOT NULL,date TEXT NOT NULL,recurrence_id INTEGER,created_at TEXT NOT NULL);
 CREATE TABLE IF NOT EXISTS recurrences(id INTEGER PRIMARY KEY,user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,account_id INTEGER NOT NULL REFERENCES accounts(id),category_id INTEGER NOT NULL REFERENCES categories(id),kind TEXT NOT NULL,scope TEXT NOT NULL,amount_cents INTEGER NOT NULL,description TEXT NOT NULL,day INTEGER NOT NULL CHECK(day BETWEEN 1 AND 31),start_month TEXT NOT NULL,occurrences INTEGER,active INTEGER NOT NULL DEFAULT 1,created_at TEXT NOT NULL);
+CREATE TABLE IF NOT EXISTS skipped_recurrences(user_id INTEGER NOT NULL REFERENCES users(id) ON DELETE CASCADE,recurrence_id INTEGER NOT NULL REFERENCES recurrences(id) ON DELETE CASCADE,date TEXT NOT NULL,PRIMARY KEY(recurrence_id,date));
 CREATE UNIQUE INDEX IF NOT EXISTS entry_recurrence_date ON entries(recurrence_id,date) WHERE recurrence_id IS NOT NULL;
 CREATE INDEX IF NOT EXISTS entries_user_date ON entries(user_id,date);''')
 def hashpass(password,salt=None):
@@ -42,7 +43,8 @@ def materialize(c,uid):
   for i in range(max(0,min(diff+1,r['occurrences'] or 1200))):
    m=monthadd(r['start_month'],i); y,mo=map(int,m.split('-')); day=min(r['day'],calendar.monthrange(y,mo)[1]); date=f'{m}-{day:02d}'
    if date>today().isoformat(): continue
-   c.execute('''INSERT OR IGNORE INTO entries(user_id,account_id,category_id,kind,scope,amount_cents,description,date,recurrence_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)''',(uid,r['account_id'],r['category_id'],r['kind'],r['scope'],r['amount_cents'],r['description'],date,r['id'],now().isoformat()))
+   if not c.execute('SELECT 1 FROM skipped_recurrences WHERE recurrence_id=? AND date=?',(r['id'],date)).fetchone():
+    c.execute('''INSERT OR IGNORE INTO entries(user_id,account_id,category_id,kind,scope,amount_cents,description,date,recurrence_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)''',(uid,r['account_id'],r['category_id'],r['kind'],r['scope'],r['amount_cents'],r['description'],date,r['id'],now().isoformat()))
 def integer(value):
  if isinstance(value,bool) or not isinstance(value,int): raise ValueError('Importo non valido')
  return value
@@ -58,7 +60,7 @@ def datecheck(s):
  if not isinstance(s,str) or dt.date.fromisoformat(s).isoformat()!=s: raise ValueError('Data non valida')
  return s
 def export_data(c,uid):
- return {'version':1,'accounts':[dict(x) for x in c.execute('SELECT id,name,opening_cents FROM accounts WHERE user_id=?',(uid,))], 'categories':[dict(x) for x in c.execute('SELECT id,name,kind FROM categories WHERE user_id=?',(uid,))], 'recurrences':[dict(x) for x in c.execute('SELECT * FROM recurrences WHERE user_id=?',(uid,))], 'entries':[dict(x) for x in c.execute('SELECT * FROM entries WHERE user_id=?',(uid,))]}
+ return {'version':1,'accounts':[dict(x) for x in c.execute('SELECT id,name,opening_cents FROM accounts WHERE user_id=?',(uid,))], 'categories':[dict(x) for x in c.execute('SELECT id,name,kind FROM categories WHERE user_id=?',(uid,))], 'recurrences':[dict(x) for x in c.execute('SELECT * FROM recurrences WHERE user_id=?',(uid,))], 'entries':[dict(x) for x in c.execute('SELECT * FROM entries WHERE user_id=?',(uid,))], 'skipped_recurrences':[dict(x) for x in c.execute('SELECT recurrence_id,date FROM skipped_recurrences WHERE user_id=?',(uid,))]}
 class Handler(BaseHTTPRequestHandler):
  def log_message(self,*args): pass
  def respond(self,obj,status=200,cookie=None):
@@ -123,7 +125,8 @@ class Handler(BaseHTTPRequestHandler):
     elif path=='/api/category':
      name=str(d.get('name','')).strip(); kind=d.get('kind')
      if not 1<=len(name)<=80 or kind not in ('expense','income'):raise ValueError('Categoria non valida')
-     c.execute('INSERT INTO categories(user_id,name,kind) VALUES (?,?,?)',(uid,name,kind))
+     cur=c.execute('INSERT INTO categories(user_id,name,kind) VALUES (?,?,?)',(uid,name,kind))
+     return self.respond({'ok':True,'id':cur.lastrowid})
     elif path=='/api/recurrence':
      a,k,kind,scope,amount,desc=validated_entry(c,uid,d); day=integer(d.get('day')); count=d.get('occurrences')
      if not 1<=day<=31 or (count is not None and not 1<=integer(count)<=1200):raise ValueError('Ricorrenza non valida')
@@ -158,7 +161,26 @@ class Handler(BaseHTTPRequestHandler):
       datecheck(row['date']);kind=row['kind'];scope=row['scope'];amount=integer(row['amount_cents'])
       if amount<=0 or row['account_id'] not in accounts or row['category_id'] not in categories or row['recurrence_id'] is not None and row['recurrence_id'] not in recs or kind not in ('expense','income') or scope not in ('personal','household') or not any(x['id']==row['category_id'] and x['kind']==kind for x in d['categories']):raise ValueError('Movimento nel backup non valido')
       c.execute('INSERT INTO entries(user_id,account_id,category_id,kind,scope,amount_cents,description,date,recurrence_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',(uid,accounts[row['account_id']],categories[row['category_id']],kind,scope,amount,str(row['description'])[:160],row['date'],recs.get(row['recurrence_id']) if row['recurrence_id'] is not None else None,row['created_at']))
+     for row in d.get('skipped_recurrences',[]):
+      if row['recurrence_id'] not in recs:raise ValueError('Rata saltata nel backup non valida')
+      c.execute('INSERT INTO skipped_recurrences(user_id,recurrence_id,date) VALUES (?,?,?)',(uid,recs[row['recurrence_id']],datecheck(row['date'])))
     else:return self.respond({'error':'Non trovato'},404)
+    return self.respond({'ok':True})
+  except (ValueError,KeyError,TypeError,sqlite3.IntegrityError) as e:return self.respond({'error':str(e)},400)
+ def do_PATCH(self):
+  path=urlparse(self.path).path.split('/')
+  if len(path)!=4 or path[1:3]!=['api','entry']:return self.respond({'error':'Non trovato'},404)
+  try:
+   obj=int(path[3]); d=self.body()
+   with connect() as c:
+    u=self.user(c)
+    if not u:return self.respond({'error':'Accesso richiesto'},401)
+    row=c.execute('SELECT date,recurrence_id FROM entries WHERE id=? AND user_id=?',(obj,u['id'])).fetchone()
+    if not row:return self.respond({'error':'Movimento non trovato'},404)
+    a,k,kind,scope,amount,desc=validated_entry(c,u['id'],d); date=datecheck(d.get('date'))
+    if row['recurrence_id'] and date!=row['date']:
+     c.execute('INSERT OR IGNORE INTO skipped_recurrences(user_id,recurrence_id,date) VALUES (?,?,?)',(u['id'],row['recurrence_id'],row['date']))
+    c.execute('UPDATE entries SET account_id=?,category_id=?,kind=?,scope=?,amount_cents=?,description=?,date=? WHERE id=? AND user_id=?',(a,k,kind,scope,amount,desc,date,obj,u['id']))
     return self.respond({'ok':True})
   except (ValueError,KeyError,TypeError,sqlite3.IntegrityError) as e:return self.respond({'error':str(e)},400)
  def do_DELETE(self):
@@ -170,8 +192,9 @@ class Handler(BaseHTTPRequestHandler):
    u=self.user(c)
    if not u:return self.respond({'error':'Accesso richiesto'},401)
    if path[2]=='entry':
-    row=c.execute('SELECT recurrence_id FROM entries WHERE id=? AND user_id=?',(obj,u['id'])).fetchone()
-    if row and row['recurrence_id']:return self.respond({'error':'Disattiva la ricorrenza per interrompere i futuri addebiti'},400)
+    row=c.execute('SELECT recurrence_id,date FROM entries WHERE id=? AND user_id=?',(obj,u['id'])).fetchone()
+    if not row:return self.respond({'error':'Movimento non trovato'},404)
+    if row['recurrence_id']:c.execute('INSERT OR IGNORE INTO skipped_recurrences(user_id,recurrence_id,date) VALUES (?,?,?)',(u['id'],row['recurrence_id'],row['date']))
     c.execute('DELETE FROM entries WHERE id=? AND user_id=?',(obj,u['id']))
    else:c.execute('UPDATE recurrences SET active=0 WHERE id=? AND user_id=?',(obj,u['id']))
    return self.respond({'ok':True})
