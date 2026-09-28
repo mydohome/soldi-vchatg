@@ -126,6 +126,7 @@ class Handler(BaseHTTPRequestHandler):
      name=str(d.get('name','')).strip(); kind=d.get('kind')
      if not 1<=len(name)<=80 or kind not in ('expense','income'):raise ValueError('Categoria non valida')
      cur=c.execute('INSERT INTO categories(user_id,name,kind) VALUES (?,?,?)',(uid,name,kind))
+     c.commit()
      return self.respond({'ok':True,'id':cur.lastrowid})
     elif path=='/api/recurrence':
      a,k,kind,scope,amount,desc=validated_entry(c,uid,d); day=integer(d.get('day')); count=d.get('occurrences')
