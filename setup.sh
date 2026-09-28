@@ -3,6 +3,48 @@ set -eu
 cd "$(dirname "$0")"
 command -v docker >/dev/null 2>&1 || { echo 'Docker non trovato'; exit 1; }
 docker compose version >/dev/null 2>&1 || { echo 'Docker Compose non trovato'; exit 1; }
+command -v python3 >/dev/null 2>&1 || { echo 'Python 3 non trovato (necessario per verificare le porte)'; exit 1; }
+
+port_available() {
+  python3 - "$1" <<'PY'
+import socket
+import sys
+
+port = int(sys.argv[1])
+with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
+    try:
+        sock.bind(("0.0.0.0", port))
+    except OSError:
+        sys.exit(1)
+PY
+}
+
+choose_port() {
+  label=$1
+  suggested=''
+  candidate=8088
+  while [ "$candidate" -le 8999 ]; do
+    if port_available "$candidate"; then suggested=$candidate; break; fi
+    candidate=$((candidate + 1))
+  done
+  [ -n "$suggested" ] || { echo 'Nessuna porta libera tra 8088 e 8999.' >&2; return 1; }
+  while :; do
+    printf '%s [%s]: ' "$label" "$suggested" >&2
+    IFS= read -r selected || return 1
+    selected=${selected:-$suggested}
+    case "$selected" in
+      *[!0-9]*|'') echo 'Inserisci una porta numerica tra 1 e 65535.' >&2; continue ;;
+    esac
+    if [ "$selected" -lt 1 ] || [ "$selected" -gt 65535 ]; then
+      echo 'Inserisci una porta tra 1 e 65535.' >&2
+    elif ! port_available "$selected"; then
+      echo "La porta $selected è già occupata o non disponibile." >&2
+    else
+      printf '%s\n' "$selected"
+      return 0
+    fi
+  done
+}
 
 existing=0; old_key=''; old_mode=''
 if [ -f .env ]; then
