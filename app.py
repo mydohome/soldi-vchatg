@@ -6,6 +6,7 @@ from urllib.parse import urlparse, parse_qs
 
 ROOT=Path(__file__).parent; DATA=Path(os.getenv('DATA_DIR','/data')); DATA.mkdir(parents=True,exist_ok=True)
 DB=DATA/'spese.sqlite3'; COOKIE='spese_session'; TZ=ZoneInfo(os.getenv('TZ','Europe/Rome'))
+COOKIE_FLAGS='; HttpOnly; SameSite=Lax; Path=/' + ('' if os.getenv('DEPLOY_MODE')=='lan-http' else '; Secure')
 def now(): return dt.datetime.now(TZ)
 def today(): return now().date()
 def connect():
@@ -104,14 +105,14 @@ class Handler(BaseHTTPRequestHandler):
     if path=='/api/login':
      u=c.execute('SELECT * FROM users WHERE username=?',(str(d.get('username','')).strip(),)).fetchone()
      if not u or not verify(str(d.get('password','')),u['passhash']):return self.respond({'error':'Credenziali non valide'},401)
-     token=secrets.token_urlsafe(32); c.execute('INSERT INTO sessions VALUES (?,?,?)',(hashlib.sha256(token.encode()).hexdigest(),u['id'],(now()+dt.timedelta(days=30)).isoformat()));return self.respond({'ok':True},cookie=f'{COOKIE}={token}; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=2592000')
+     token=secrets.token_urlsafe(32); c.execute('INSERT INTO sessions VALUES (?,?,?)',(hashlib.sha256(token.encode()).hexdigest(),u['id'],(now()+dt.timedelta(days=30)).isoformat()));return self.respond({'ok':True},cookie=f'{COOKIE}={token}{COOKIE_FLAGS}; Max-Age=2592000')
     u=self.user(c)
     if not u:return self.respond({'error':'Accesso richiesto'},401)
     uid=u['id']
     if path=='/api/logout':
      token=next((x.strip()[len(COOKIE)+1:] for x in self.headers.get('Cookie','').split(';') if x.strip().startswith(COOKIE+'=')),None)
      if token:c.execute('DELETE FROM sessions WHERE token_hash=?',(hashlib.sha256(token.encode()).hexdigest(),))
-     return self.respond({'ok':True},cookie=f'{COOKIE}=; HttpOnly; Secure; SameSite=Lax; Path=/; Max-Age=0')
+     return self.respond({'ok':True},cookie=f'{COOKIE}={COOKIE_FLAGS}; Max-Age=0')
     if path=='/api/entry':
      a,k,kind,scope,amount,desc=validated_entry(c,uid,d); date=datecheck(d.get('date'))
      c.execute('INSERT INTO entries(user_id,account_id,category_id,kind,scope,amount_cents,description,date,created_at) VALUES (?,?,?,?,?,?,?,?,?)',(uid,a,k,kind,scope,amount,desc,date,now().isoformat()))
