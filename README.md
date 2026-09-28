@@ -217,6 +217,8 @@ Prima di aggiornamenti importanti è consigliato conservare anche un backup del 
 
 Apri l'app in Safari e usa **Aggiungi alla schermata Home** per avviarla come una webapp.
 
+Nella schermata **Movimenti** puoi modificare o eliminare anche una singola rata ricorrente. Le altre rate restano programmate; una rata eliminata non viene creata di nuovo. Sotto ogni rata di una ricorrenza con durata definita compare l'avanzamento (per esempio “Rata 2 di 12”). Puoi creare una categoria direttamente nella finestra **Nuovo movimento**: verrà selezionata subito.
+
 L'app richiede una connessione al server e non dispone di una modalità offline.
 
 ---
