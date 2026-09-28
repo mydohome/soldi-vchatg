@@ -6,10 +6,7 @@ Webapp mobile per spese personali e domestiche. Ogni utente possiede conti, cate
 
 Requisiti: Docker Compose v2. Per il deploy normale sono consigliati Nginx Proxy Manager (NPM), un dominio e HTTPS; per i test è disponibile anche l'accesso HTTP diretto in LAN.
 
-```sh
-chmod +x setup.sh
-./setup.sh
-```
+Per la primissima installazione sul server:\n\n```sh\ngit clone https://github.com/mydohome/soldi-vchatg.git\ncd soldi-vchatg\nchmod +x setup.sh update.sh\n./setup.sh\n```
 
 Il setup offre tre modalità: HTTP diretto in LAN per test, NPM sulla stessa rete Docker, oppure NPM su un altro host. In LAN viene pubblicata una porta HTTP del server. Per LAN e NPM remoto il setup cerca una porta libera tra 8088 e 8999, la propone come default e consente di sostituirla; anche la porta inserita manualmente viene controllata prima di applicare la configurazione. Con NPM locale indica una rete Docker esterna esistente e configura l'upstream `app:8080`; con NPM remoto usa l'IP del server Docker e la porta scelta, limitandola via firewall al solo host NPM. Per NPM attiva certificato SSL e Force SSL.\n\n`setup.sh` è rilanciabile: se l'installazione esiste, mantiene `INSTALL_KEY`, utenti e volume `spese_data`, consente di scegliere nuovamente una delle tre modalità, rigenera `.env` e `compose.override.yaml`, ricrea lo stack e verifica `/api/health`. Il primo amministratore viene richiesto solo alla prima installazione. SQLite usa un volume Docker e non richiede una password database.
 
