@@ -11,6 +11,7 @@ services:
     environment:
       DATA_DIR: /data
       TZ: Europe/Rome
+      DEPLOY_MODE: ${DEPLOY_MODE:-npm-docker}
     volumes:
       - spese_data:/data
     networks:
