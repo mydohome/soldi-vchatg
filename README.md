@@ -225,7 +225,7 @@ L'app richiede una connessione al server e non dispone di una modalità offline.
 
 Le password sono archiviate con **PBKDF2-HMAC-SHA256** e sale casuale.
 
-Le sessioni utilizzano cookie HttpOnly/Secure/SameSite. Per l'utilizzo normale dell'app è quindi consigliato HTTPS dietro Nginx Proxy Manager; la modalità HTTP LAN è destinata ai test.
+Le sessioni utilizzano cookie HttpOnly e SameSite. Dietro Nginx Proxy Manager il cookie è anche Secure e richiede HTTPS. Nella modalità HTTP LAN, destinata ai test, il cookie non ha l'attributo Secure per permettere il login; usa questa modalità solo su una rete fidata.
 
 La lista dei movimenti mostra i 200 elementi più recenti, mentre grafici e saldi utilizzano tutti i movimenti.
 
