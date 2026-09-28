@@ -4,14 +4,14 @@ Webapp mobile per spese personali e domestiche. Ogni utente possiede conti, cate
 
 ## Installazione
 
-Requisiti: Docker Compose v2, Nginx Proxy Manager (NPM), un dominio e HTTPS.
+Requisiti: Docker Compose v2. Per il deploy normale sono consigliati Nginx Proxy Manager (NPM), un dominio e HTTPS; per i test è disponibile anche l'accesso HTTP diretto in LAN.
 
 ```sh
 chmod +x setup.sh
 ./setup.sh
 ```
 
-Scegli NPM sulla stessa rete Docker o su altro host. Nel primo caso indica una rete Docker esterna esistente, condivisa con NPM, e configura l'upstream `app:8080`. Nel secondo caso configura come upstream l'IP del server Docker e la porta scelta; limita tale porta con firewall al solo host NPM. Attiva un certificato SSL e Force SSL in NPM. Lo script crea `.env` con un segreto casuale e `compose.override.yaml`, poi chiede le credenziali del primo amministratore. SQLite usa un volume Docker e non richiede una password database. Conserva la password amministratore e il backup in luogo sicuro.
+Il setup offre tre modalità: HTTP diretto in LAN per test, NPM sulla stessa rete Docker, oppure NPM su un altro host. In LAN viene pubblicata una porta HTTP del server. Con NPM locale indica una rete Docker esterna esistente e configura l'upstream `app:8080`; con NPM remoto usa l'IP del server Docker e la porta scelta, limitandola via firewall al solo host NPM. Per NPM attiva certificato SSL e Force SSL.\n\n`setup.sh` è rilanciabile: se l'installazione esiste, mantiene `INSTALL_KEY`, utenti e volume `spese_data`, consente di scegliere nuovamente una delle tre modalità, rigenera `.env` e `compose.override.yaml`, ricrea lo stack e verifica `/api/health`. Il primo amministratore viene richiesto solo alla prima installazione. SQLite usa un volume Docker e non richiede una password database.
 
 Per aggiornare: `docker compose up -d --build`. Per vedere i log: `docker compose logs -f app`. Per un backup completo dalla UI: Impostazioni → Scarica backup. Il ripristino sostituisce i soli dati dell'utente corrente; l'account e la password restano invariati.
 
