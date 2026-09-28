@@ -1,41 +1,246 @@
 # Spese
 
-Webapp mobile per spese personali e domestiche. Ogni utente possiede conti, categorie, movimenti, ricorrenze e backup separati. L'amministratore crea gli altri utenti. Interfaccia in italiano con tasto rapido fisso per spese ed entrate.
+Webapp mobile per il tracciamento delle **spese personali e domestiche**, pensata anche per l'uso da iPhone.
 
-## Installazione
+Ogni utente dispone di conti, categorie, movimenti, ricorrenze e backup separati. L'amministratore può creare gli altri utenti.
 
-Requisiti: Docker Compose v2. Per il deploy normale sono consigliati Nginx Proxy Manager (NPM), un dominio e HTTPS; per i test è disponibile anche l'accesso HTTP diretto in LAN.
+## Funzioni principali
 
-Per la primissima installazione sul server:\n\n```sh\ngit clone https://github.com/mydohome/soldi-vchatg.git\ncd soldi-vchatg\nchmod +x setup.sh update.sh\n./setup.sh\n```
+- Spese ed entrate con ambito **Personale** o **Casa**.
+- Più conti e categorie di spesa.
+- Ricorrenze mensili programmabili.
+- Dashboard con riepiloghi giornalieri, settimanali e mensili.
+- Confronto con il mese precedente e andamento degli ultimi sei mesi.
+- Suggerimenti locali basati sui movimenti precedenti dell'utente.
+- Backup e ripristino JSON per singolo utente.
+- Dati persistenti in un volume Docker.
+- Interfaccia mobile utilizzabile da Safari su iPhone.
 
-Il setup offre tre modalità: HTTP diretto in LAN per test, NPM sulla stessa rete Docker, oppure NPM su un altro host. In LAN viene pubblicata una porta HTTP del server. Per LAN e NPM remoto il setup cerca una porta libera tra 8088 e 8999, la propone come default e consente di sostituirla; anche la porta inserita manualmente viene controllata prima di applicare la configurazione. Con NPM locale indica una rete Docker esterna esistente e configura l'upstream `app:8080`; con NPM remoto usa l'IP del server Docker e la porta scelta, limitandola via firewall al solo host NPM. Per NPM attiva certificato SSL e Force SSL.\n\n`setup.sh` è rilanciabile: se l'installazione esiste, mantiene `INSTALL_KEY`, utenti e volume `spese_data`, consente di scegliere nuovamente una delle tre modalità, rigenera `.env` e `compose.override.yaml`, ricrea lo stack e verifica `/api/health`. Il primo amministratore viene richiesto solo alla prima installazione. SQLite usa un volume Docker e non richiede una password database.
+---
 
-Per aggiornare: `docker compose up -d --build`. Per vedere i log: `docker compose logs -f app`. Per un backup completo dalla UI: Impostazioni → Scarica backup. Il ripristino sostituisce i soli dati dell'utente corrente; l'account e la password restano invariati.
+## Requisiti
 
-## Funzioni
+Sul server devono essere disponibili:
 
-- Spese ed entrate con ambito personale o casa, categoria, conto e data.
-- Ricorrenze mensili con giorno 1–31 e numero opzionale di occorrenze. Nei mesi più corti viene usato l'ultimo giorno; gli addebiti maturati sono creati all'apertura dell'app, senza duplicati.
-- Suggerimenti locali per descrizioni e categorie basati sulla frequenza dei movimenti passati del solo utente.
-- Dashboard con spese giornaliere, settimanali e mensili, confronto percentuale col mese precedente, andamento a sei mesi e categorie. I saldi includono il saldo iniziale e i movimenti caricati.
-- Backup JSON e ripristino per utente. Dati persistenti nel volume `spese_data`.
+- Git
+- Docker
+- Docker Compose v2
 
-Aggiungi la pagina alla schermata Home da Safari su iPhone per usarla come webapp. L'app richiede connessione al server; non contiene una modalità offline.
+Per l'utilizzo normale è consigliato pubblicare l'app tramite **Nginx Proxy Manager (NPM)** con dominio e HTTPS.
 
-## Sicurezza e limiti
+Per i test è disponibile anche una modalità **HTTP diretta in LAN**.
 
-Password archiviate con PBKDF2-HMAC-SHA256 e sale casuale; sessioni in cookie HttpOnly/Secure/SameSite. Servi l'app solo via HTTPS dietro NPM. La lista movimenti mostra i 200 più recenti; grafici e saldi usano tutti i movimenti. Il modello di suggerimento è un conteggio delle descrizioni già usate, senza servizi esterni. Prima di aggiornamenti importanti, conserva anche un backup del volume Docker.
+---
 
-## Test automatici
+## Prima installazione
 
-Il workflow GitHub Actions `.github/workflows/test.yml` controlla la sintassi, costruisce l'immagine e avvia Compose con un test HTTP di accesso, movimento e backup. Usa un runner Linux standard e non pubblica l'app.
+Sul server esegui:
+
+```sh
+git clone https://github.com/mydohome/soldi-vchatg.git
+cd soldi-vchatg
+chmod +x setup.sh update.sh
+./setup.sh
+```
+
+Alla prima esecuzione `setup.sh`:
+
+1. chiede la modalità di deploy;
+2. prepara la configurazione Docker;
+3. costruisce l'immagine;
+4. chiede le credenziali del primo amministratore;
+5. avvia lo stack;
+6. verifica il funzionamento tramite `/api/health`.
+
+SQLite utilizza il volume Docker `spese_data`; non è necessaria una password per il database.
+
+---
+
+## Modalità di deploy
+
+Durante il setup puoi scegliere una delle tre modalità.
+
+### 1. Test in LAN via HTTP
+
+Pubblica direttamente l'app su una porta del server.
+
+Il setup cerca automaticamente una porta TCP libera nell'intervallo **8088–8999** e la propone come default. Puoi accettarla premendo Invio oppure indicarne un'altra.
+
+Anche una porta inserita manualmente viene controllata prima di procedere.
+
+Al termine verrà mostrato un indirizzo simile a:
+
+```text
+http://IP_DEL_SERVER:8088
+```
+
+Questa modalità è pensata per **test nella rete locale**.
+
+### 2. NPM sulla stessa macchina / rete Docker
+
+Usa questa modalità quando Nginx Proxy Manager può raggiungere direttamente il container tramite una rete Docker condivisa.
+
+Il setup chiede il nome della rete Docker, ad esempio:
+
+```text
+npm_proxy
+```
+
+La rete deve esistere già.
+
+Nel Proxy Host di NPM configura:
+
+```text
+Forward Hostname / IP: app
+Forward Port:          8080
+```
+
+Abilita HTTPS e **Force SSL** in NPM.
+
+### 3. NPM su un altro host
+
+Usa questa modalità quando Nginx Proxy Manager gira su un server differente.
+
+Il setup cerca una porta libera nell'intervallo **8088–8999**, la propone e permette di cambiarla.
+
+In NPM configura come destinazione:
+
+```text
+Forward Hostname / IP: IP_DEL_SERVER_DOCKER
+Forward Port:          PORTA_SCELTA_DAL_SETUP
+```
+
+È consigliato limitare tramite firewall l'accesso a questa porta al solo host che esegue NPM.
+
+---
+
+## Riconfigurare il deploy
+
+`setup.sh` può essere eseguito nuovamente anche dopo l'installazione:
+
+```sh
+cd soldi-vchatg
+./setup.sh
+```
+
+Lo script rileva l'installazione esistente e permette di passare, ad esempio:
+
+```text
+LAN HTTP → NPM locale
+LAN HTTP → NPM remoto
+NPM locale → NPM remoto
+NPM remoto → NPM locale
+```
+
+Durante la riconfigurazione vengono aggiornati `.env` e `compose.override.yaml` e lo stack viene ricreato.
+
+Vengono mantenuti:
+
+- utenti;
+- database;
+- volume `spese_data`;
+- `INSTALL_KEY`.
+
+La creazione del primo amministratore viene quindi richiesta **solo alla prima installazione**.
+
+---
 
 ## Aggiornamenti
 
-Dalla cartella del repository sul server:
+Per i normali aggiornamenti non è necessario eseguire manualmente `git pull`.
+
+Dalla directory del progetto:
 
 ```sh
 ./update.sh
 ```
 
-Lo script richiede il branch `main`, una copia Git senza modifiche ai file tracciati, `.env` e Docker Compose v2. Controlla `origin/main`, applica solo un avanzamento lineare, ricostruisce lo stack e verifica HTTP e database tramite `/api/health`. Se la nuova versione non si avvia o non risponde entro circa un minuto, riporta codice e container al commit precedente e restituisce un errore. Un ripristino del codice non annulla eventuali migrazioni del database: conserva sempre un backup prima di aggiornamenti importanti. Se non ci sono novità, non riavvia i container.
+Lo script:
+
+- controlla la presenza di aggiornamenti su `origin/main`;
+- applica solo un avanzamento lineare del repository;
+- ricostruisce lo stack Docker;
+- riavvia i container;
+- verifica HTTP e database tramite `/api/health`.
+
+Se la nuova versione non si avvia correttamente, lo script tenta di riportare codice e container al commit precedente e restituisce un errore.
+
+> **Nota:** il rollback del codice non annulla eventuali migrazioni del database. Prima di aggiornamenti importanti conserva sempre un backup.
+
+Se non sono disponibili aggiornamenti, i container non vengono riavviati.
+
+---
+
+## Comandi utili
+
+Visualizzare lo stato dei container:
+
+```sh
+docker compose ps
+```
+
+Seguire i log dell'app:
+
+```sh
+docker compose logs -f app
+```
+
+Riavviare lo stack:
+
+```sh
+docker compose restart
+```
+
+Verificare la configurazione Compose risultante:
+
+```sh
+docker compose config
+```
+
+---
+
+## Backup e ripristino
+
+Dall'interfaccia dell'app:
+
+**Impostazioni → Scarica backup**
+
+Il backup è relativo all'utente corrente.
+
+Il ripristino sostituisce i dati dell'utente corrente, mentre account e password rimangono invariati.
+
+Prima di aggiornamenti importanti è consigliato conservare anche un backup del volume Docker.
+
+---
+
+## Utilizzo da iPhone
+
+Apri l'app in Safari e usa **Aggiungi alla schermata Home** per avviarla come una webapp.
+
+L'app richiede una connessione al server e non dispone di una modalità offline.
+
+---
+
+## Sicurezza e limiti
+
+Le password sono archiviate con **PBKDF2-HMAC-SHA256** e sale casuale.
+
+Le sessioni utilizzano cookie HttpOnly/Secure/SameSite. Per l'utilizzo normale dell'app è quindi consigliato HTTPS dietro Nginx Proxy Manager; la modalità HTTP LAN è destinata ai test.
+
+La lista dei movimenti mostra i 200 elementi più recenti, mentre grafici e saldi utilizzano tutti i movimenti.
+
+I suggerimenti sono calcolati localmente sui dati dell'utente e non utilizzano servizi esterni.
+
+---
+
+## Test automatici
+
+Il workflow GitHub Actions:
+
+```text
+.github/workflows/test.yml
+```
+
+controlla la sintassi, costruisce l'immagine Docker e avvia Compose eseguendo test HTTP su accesso, movimenti e backup.
+
+Il workflow utilizza un runner Linux standard e non pubblica l'app.
