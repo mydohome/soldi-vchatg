@@ -5,10 +5,10 @@ CID="$(docker compose ps -q app)"
 [ -n "$CID" ] || { echo "Container app non avviato" >&2; exit 1; }
 
 echo "Backup Disaster Recovery disponibili:"
-docker exec "$CID" sh -c 'ls -1t /data/backups/DR-*.tgz 2>/dev/null || true'
+docker exec "$CID" sh -c 'ls -1t /backups/DR-*.tgz 2>/dev/null || true'
 printf "Nome archivio DR da ripristinare: "; read -r archive
 case "$archive" in DR-*.tgz) ;; *) echo "Archivio DR non valido" >&2; exit 2;; esac
-docker exec "$CID" test -f "/data/backups/$archive" || { echo "Backup non trovato" >&2; exit 1; }
+docker exec "$CID" test -f "/backups/$archive" || { echo "Backup non trovato" >&2; exit 1; }
 printf "ATTENZIONE: verranno sostituiti applicazione, configurazione e database. Scrivi RIPRISTINA-DR: "
 read -r confirm
 [ "$confirm" = "RIPRISTINA-DR" ] || { echo "Annullato"; exit 0; }
@@ -17,7 +17,7 @@ echo "Creo un DR di sicurezza dello stato corrente..."
 ./backup.sh dr >/dev/null
 tmp="$(mktemp -d)"
 trap 'rm -rf "$tmp"' EXIT
-docker cp "$CID:/data/backups/$archive" "$tmp/$archive"
+docker cp "$CID:/backups/$archive" "$tmp/$archive"
 mkdir "$tmp/unpack"
 tar -xzf "$tmp/$archive" -C "$tmp/unpack"
 [ -f "$tmp/unpack/app.py" ] && [ -f "$tmp/unpack/compose.yaml" ] || { echo "Archivio DR incompleto" >&2; exit 1; }
