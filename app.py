@@ -280,7 +280,7 @@ class Handler(BaseHTTPRequestHandler):
     elif path=='/api/server-restore':
      name=str(d.get('name','')); payload=restore_server_backup(name,uid,u['username'],bool(u['admin']))
      if payload is None:return self.respond({'ok':True,'scope':'DR'})
-     d=payload; path='/api/restore'
+     return self.respond({'ok':True,'scope':'user','data':payload})
     elif path=='/api/import-excel':
      encoded=d.get('file_base64')
      if not isinstance(encoded,str):raise ValueError('File mancante')
