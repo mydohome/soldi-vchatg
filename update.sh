@@ -55,4 +55,16 @@ rollback() {
 if ! git merge --ff-only --quiet "$new_rev"; then error 'Impossibile applicare l’aggiornamento'; exit 1; fi
 if ! docker compose config --quiet || ! docker compose up -d --build; then rollback; fi
 if ! healthy; then rollback; fi
+if [ -w /etc/cron.d ] || [ "$(id -u)" -eq 0 ]; then
+  project_dir=$(pwd)
+  {
+    echo 'SHELL=/bin/sh'
+    printf '15 2 * * * root cd "%s" && ./backup.sh users >> /var/log/soldi-vchatg-backup.log 2>&1\n' "$project_dir"
+    printf '15 3 * * 0 root cd "%s" && ./backup.sh dr >> /var/log/soldi-vchatg-backup.log 2>&1\n' "$project_dir"
+  } > /etc/cron.d/soldi-vchatg
+  chmod 644 /etc/cron.d/soldi-vchatg
+  printf 'Cron backup configurato: utenti giornalieri, DR settimanale.\n'
+else
+  printf 'ATTENZIONE: cron non configurato (permessi insufficienti su /etc/cron.d).\n' >&2
+fi
 printf 'Aggiornamento completato: stack funzionante (%s).\n' "$(git rev-parse --short HEAD)"
