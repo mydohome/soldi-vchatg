@@ -204,7 +204,7 @@ class Handler(BaseHTTPRequestHandler):
      except Exception: raise ValueError('File non valido')
      if len(raw)>8_000_000:raise ValueError('File troppo grande')
      rows,errors=parse_excel(c,uid,raw)
-     if errors:return self.respond({'ok':False,'errors':errors},400)
+     if errors:return self.respond({'ok':False,'error':'Errori nel file: '+ '; '.join('riga '+str(x['riga'])+': '+x['errore'] for x in errors[:8]),'errors':errors},400)
      c.executemany('INSERT INTO entries(user_id,account_id,category_id,kind,scope,amount_cents,description,date,created_at) VALUES (?,?,?,?,?,?,?,?,?)',rows)
      c.commit(); return self.respond({'ok':True,'imported':len(rows)})
     elif path=='/api/restore':
