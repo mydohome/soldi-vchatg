@@ -53,6 +53,13 @@ rollback() {
 }
 
 if ! git merge --ff-only --quiet "$new_rev"; then error 'Impossibile applicare l’aggiornamento'; exit 1; fi
+mkdir -p backups
+# Migra una sola volta eventuali backup creati nel vecchio volume /data/backups.
+old_cid=$(docker compose ps -q app 2>/dev/null || true)
+if [ -n "$old_cid" ]; then
+  docker cp "$old_cid:/data/backups/." backups/ >/dev/null 2>&1 || true
+fi
+chmod 777 backups 2>/dev/null || true
 if ! docker compose config --quiet || ! docker compose up -d --build; then rollback; fi
 if ! healthy; then rollback; fi
 if [ -w /etc/cron.d ] || [ "$(id -u)" -eq 0 ]; then
