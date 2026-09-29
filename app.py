@@ -1,8 +1,11 @@
-import calendar, datetime as dt, hashlib, hmac, json, os, secrets, sqlite3, sys
+import base64, calendar, datetime as dt, hashlib, hmac, io, json, os, secrets, sqlite3, sys
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 from zoneinfo import ZoneInfo
 from urllib.parse import urlparse, parse_qs
+from openpyxl import Workbook, load_workbook
+from openpyxl.styles import Font, PatternFill
+from openpyxl.worksheet.datavalidation import DataValidation
 
 ROOT=Path(__file__).parent; DATA=Path(os.getenv('DATA_DIR','/data')); DATA.mkdir(parents=True,exist_ok=True)
 DB=DATA/'spese.sqlite3'; COOKIE='spese_session'; TZ=ZoneInfo(os.getenv('TZ','Europe/Rome'))
@@ -61,6 +64,59 @@ def datecheck(s):
  return s
 def export_data(c,uid):
  return {'version':1,'accounts':[dict(x) for x in c.execute('SELECT id,name,opening_cents FROM accounts WHERE user_id=?',(uid,))], 'categories':[dict(x) for x in c.execute('SELECT id,name,kind FROM categories WHERE user_id=?',(uid,))], 'recurrences':[dict(x) for x in c.execute('SELECT * FROM recurrences WHERE user_id=?',(uid,))], 'entries':[dict(x) for x in c.execute('SELECT * FROM entries WHERE user_id=?',(uid,))], 'skipped_recurrences':[dict(x) for x in c.execute('SELECT recurrence_id,date FROM skipped_recurrences WHERE user_id=?',(uid,))]}
+
+def excel_template(c,uid):
+ wb=Workbook(); ws=wb.active; ws.title='Movimenti'
+ ws.append(['Data','Tipo','Ambito','Importo','Descrizione','Conto','Categoria'])
+ ws.append([today().isoformat(),'Spesa','Personale',12.50,'Esempio - sostituire o eliminare','Conto principale','Alimentari'])
+ for cell in ws[1]: cell.font=Font(bold=True); cell.fill=PatternFill('solid',fgColor='DDEFEA')
+ for col,w in zip('ABCDEFG',[14,14,16,14,38,24,24]): ws.column_dimensions[col].width=w
+ ws.freeze_panes='A2'; ws.auto_filter.ref='A1:G2'
+ lists=wb.create_sheet('Valori'); lists.sheet_state='hidden'
+ accounts=[x['name'] for x in c.execute('SELECT name FROM accounts WHERE user_id=? ORDER BY name',(uid,))]
+ cats=[x['name'] for x in c.execute('SELECT name FROM categories WHERE user_id=? ORDER BY name',(uid,))]
+ for i,v in enumerate(accounts,1): lists.cell(i,1,v)
+ for i,v in enumerate(cats,1): lists.cell(i,2,v)
+ for col,formula in [('B','"Spesa,Entrata"'),('C','"Personale,Casa"')]:
+  dv=DataValidation(type='list',formula1=formula); ws.add_data_validation(dv); dv.add(col+'2:'+col+'1001')
+ if accounts:
+  dv=DataValidation(type='list',formula1="'Valori'!$A$1:$A$"+str(len(accounts))); ws.add_data_validation(dv); dv.add('F2:F1001')
+ if cats:
+  dv=DataValidation(type='list',formula1="'Valori'!$B$1:$B$"+str(len(cats))); ws.add_data_validation(dv); dv.add('G2:G1001')
+ out=io.BytesIO(); wb.save(out); return out.getvalue()
+
+def parse_excel(c,uid,raw):
+ try: wb=load_workbook(io.BytesIO(raw),data_only=True)
+ except Exception: raise ValueError('File Excel non valido')
+ ws=wb['Movimenti'] if 'Movimenti' in wb.sheetnames else wb.active
+ expected=['Data','Tipo','Ambito','Importo','Descrizione','Conto','Categoria']
+ if [str(x.value or '').strip() for x in ws[1]][:7]!=expected: raise ValueError('Intestazioni Excel non valide: usa il template scaricabile')
+ accounts={x['name'].strip().lower():x['id'] for x in c.execute('SELECT id,name FROM accounts WHERE user_id=?',(uid,))}
+ categories={(x['name'].strip().lower(),x['kind']):x['id'] for x in c.execute('SELECT id,name,kind FROM categories WHERE user_id=?',(uid,))}
+ rows=[]; errors=[]
+ for n,row in enumerate(ws.iter_rows(min_row=2,max_col=7,values_only=True),2):
+  if not any(v not in (None,'') for v in row): continue
+  try:
+   dat,typ,amb,amount,desc,acc,cat=row
+   if isinstance(dat,dt.datetime): dat=dat.date()
+   if isinstance(dat,dt.date): dat=dat.isoformat()
+   dat=datecheck(str(dat).strip())
+   kind={'spesa':'expense','entrata':'income'}.get(str(typ).strip().lower())
+   scope={'personale':'personal','casa':'household'}.get(str(amb).strip().lower())
+   if not kind or not scope: raise ValueError('Tipo o ambito non valido')
+   cents=int(round(float(amount)*100))
+   if cents<=0: raise ValueError('Importo non valido')
+   desc=str(desc or '').strip()
+   if not 1<=len(desc)<=160: raise ValueError('Descrizione non valida')
+   aid=accounts.get(str(acc or '').strip().lower()); cid=categories.get((str(cat or '').strip().lower(),kind))
+   if not aid: raise ValueError('Conto inesistente')
+   if not cid: raise ValueError('Categoria inesistente o non compatibile col tipo')
+   rows.append((uid,aid,cid,kind,scope,cents,desc,dat,now().isoformat()))
+  except (ValueError,TypeError) as e: errors.append({'riga':n,'errore':str(e)})
+ if errors:return [],errors
+ if not rows: raise ValueError('Nessun movimento da importare')
+ return rows,[]
+
 class Handler(BaseHTTPRequestHandler):
  def log_message(self,*args): pass
  def respond(self,obj,status=200,cookie=None):
@@ -90,6 +146,8 @@ class Handler(BaseHTTPRequestHandler):
    u=self.user(c)
    if not u:return self.respond({'error':'Accesso richiesto'},401)
    uid=u['id']; materialize(c,uid); c.commit()
+   if path=='/api/import-template':
+    data=excel_template(c,uid); self.send_response(200); self.send_header('Content-Type','application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'); self.send_header('Content-Disposition','attachment; filename="template-import-movimenti.xlsx"'); self.send_header('Content-Length',str(len(data))); self.end_headers(); self.wfile.write(data); return
    if path=='/api/state':
     entries=[dict(x) for x in c.execute('SELECT e.*,a.name account_name,k.name category_name FROM entries e JOIN accounts a ON a.id=e.account_id JOIN categories k ON k.id=e.category_id WHERE e.user_id=? ORDER BY e.date DESC,e.id DESC',(uid,))]
     return self.respond({'user':{'id':uid,'username':u['username'],'admin':bool(u['admin'])},'accounts':[dict(x) for x in c.execute('SELECT * FROM accounts WHERE user_id=? ORDER BY name',(uid,))],'categories':[dict(x) for x in c.execute('SELECT * FROM categories WHERE user_id=? ORDER BY name',(uid,))],'entries':entries,'recurrences':[dict(x) for x in c.execute('SELECT * FROM recurrences WHERE user_id=? ORDER BY id DESC',(uid,))],'users':[dict(x) for x in c.execute('SELECT id,username,email,admin FROM users ORDER BY id')] if u['admin'] else [],'today':today().isoformat()})
@@ -139,6 +197,16 @@ class Handler(BaseHTTPRequestHandler):
      username=str(d.get('username','')).strip(); password=str(d.get('password',''));email=str(d.get('email','')).strip()
      if len(username)<3 or len(password)<12:raise ValueError('Nome minimo 3 caratteri e password minimo 12 caratteri')
      cur=c.execute('INSERT INTO users(username,email,passhash) VALUES (?,?,?)',(username,email,hashpass(password)));seed(c,cur.lastrowid)
+    elif path=='/api/import-excel':
+     encoded=d.get('file_base64')
+     if not isinstance(encoded,str):raise ValueError('File mancante')
+     try: raw=base64.b64decode(encoded,validate=True)
+     except Exception: raise ValueError('File non valido')
+     if len(raw)>8_000_000:raise ValueError('File troppo grande')
+     rows,errors=parse_excel(c,uid,raw)
+     if errors:return self.respond({'ok':False,'errors':errors},400)
+     c.executemany('INSERT INTO entries(user_id,account_id,category_id,kind,scope,amount_cents,description,date,created_at) VALUES (?,?,?,?,?,?,?,?,?)',rows)
+     c.commit(); return self.respond({'ok':True,'imported':len(rows)})
     elif path=='/api/restore':
      if d.get('version')!=1 or not all(isinstance(d.get(t),list) for t in ('accounts','categories','entries','recurrences')):raise ValueError('Backup non valido')
      if len(d['entries'])>100000 or len(d['recurrences'])>10000:raise ValueError('Backup troppo grande')
