@@ -8,7 +8,7 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.worksheet.datavalidation import DataValidation
 
 ROOT=Path(__file__).parent; DATA=Path(os.getenv('DATA_DIR','/data')); DATA.mkdir(parents=True,exist_ok=True)
-DB=DATA/'spese.sqlite3'; COOKIE='spese_session'; TZ=ZoneInfo(os.getenv('TZ','Europe/Rome'))
+DB=DATA/'spese.sqlite3'; BACKUPS=DATA/'backups'; BACKUPS.mkdir(parents=True,exist_ok=True); COOKIE='spese_session'; TZ=ZoneInfo(os.getenv('TZ','Europe/Rome'))
 COOKIE_FLAGS='; HttpOnly; SameSite=Lax; Path=/' + ('' if os.getenv('DEPLOY_MODE')=='lan-http' else '; Secure')
 def now(): return dt.datetime.now(TZ)
 def today(): return now().date()
@@ -64,6 +64,43 @@ def datecheck(s):
  return s
 def export_data(c,uid):
  return {'version':1,'accounts':[dict(x) for x in c.execute('SELECT id,name,opening_cents FROM accounts WHERE user_id=?',(uid,))], 'categories':[dict(x) for x in c.execute('SELECT id,name,kind FROM categories WHERE user_id=?',(uid,))], 'recurrences':[dict(x) for x in c.execute('SELECT * FROM recurrences WHERE user_id=?',(uid,))], 'entries':[dict(x) for x in c.execute('SELECT * FROM entries WHERE user_id=?',(uid,))], 'skipped_recurrences':[dict(x) for x in c.execute('SELECT recurrence_id,date FROM skipped_recurrences WHERE user_id=?',(uid,))]}
+
+def server_backup(kind='manual'):
+ if kind not in ('manual','scheduled','pre-restore'): raise ValueError('Tipo backup non valido')
+ stamp=now().strftime('%Y%m%d-%H%M%S-%f')
+ path=BACKUPS/f'{kind}-{stamp}.sqlite3'
+ src=connect()
+ try:
+  dst=sqlite3.connect(path)
+  try: src.backup(dst)
+  finally: dst.close()
+ finally: src.close()
+ return path.name
+
+def server_backups():
+ items=[]
+ for p in BACKUPS.glob('*.sqlite3'):
+  try:
+   st=p.stat(); kind=p.name.split('-',1)[0]
+   if p.name.startswith('pre-restore-'): kind='pre-restore'
+   items.append({'name':p.name,'kind':kind,'size':st.st_size,'created_at':dt.datetime.fromtimestamp(st.st_mtime,TZ).isoformat()})
+  except OSError: pass
+ return sorted(items,key=lambda x:x['created_at'],reverse=True)
+
+def restore_server_backup(name):
+ if Path(name).name!=name or not name.endswith('.sqlite3'): raise ValueError('Backup non valido')
+ path=BACKUPS/name
+ if not path.is_file(): raise ValueError('Backup non trovato')
+ check=sqlite3.connect(path)
+ try:
+  if check.execute('PRAGMA integrity_check').fetchone()[0]!='ok': raise ValueError('Backup SQLite non integro')
+  tables={x[0] for x in check.execute("SELECT name FROM sqlite_master WHERE type='table'")}
+  if not {'users','accounts','categories','entries','recurrences'}.issubset(tables): raise ValueError('Backup non compatibile')
+ finally: check.close()
+ server_backup('pre-restore')
+ src=sqlite3.connect(path); dst=connect()
+ try: src.backup(dst); dst.commit()
+ finally: src.close(); dst.close()
 
 def excel_template(c,uid):
  wb=Workbook(); ws=wb.active; ws.title='Movimenti'
@@ -152,6 +189,7 @@ class Handler(BaseHTTPRequestHandler):
     entries=[dict(x) for x in c.execute('SELECT e.*,a.name account_name,k.name category_name FROM entries e JOIN accounts a ON a.id=e.account_id JOIN categories k ON k.id=e.category_id WHERE e.user_id=? ORDER BY e.date DESC,e.id DESC',(uid,))]
     return self.respond({'user':{'id':uid,'username':u['username'],'admin':bool(u['admin'])},'accounts':[dict(x) for x in c.execute('SELECT * FROM accounts WHERE user_id=? ORDER BY name',(uid,))],'categories':[dict(x) for x in c.execute('SELECT * FROM categories WHERE user_id=? ORDER BY name',(uid,))],'entries':entries,'recurrences':[dict(x) for x in c.execute('SELECT * FROM recurrences WHERE user_id=? ORDER BY id DESC',(uid,))],'users':[dict(x) for x in c.execute('SELECT id,username,email,admin FROM users ORDER BY id')] if u['admin'] else [],'today':today().isoformat()})
    if path=='/api/export':return self.respond(export_data(c,uid))
+   if path=='/api/server-backups':return self.respond(server_backups())
    if path=='/api/suggest':
     q=parse_qs(urlparse(self.path).query).get('q',[''])[0].strip().lower()[:100]
     if len(q)<2:return self.respond([])
@@ -197,6 +235,10 @@ class Handler(BaseHTTPRequestHandler):
      username=str(d.get('username','')).strip(); password=str(d.get('password',''));email=str(d.get('email','')).strip()
      if len(username)<3 or len(password)<12:raise ValueError('Nome minimo 3 caratteri e password minimo 12 caratteri')
      cur=c.execute('INSERT INTO users(username,email,passhash) VALUES (?,?,?)',(username,email,hashpass(password)));seed(c,cur.lastrowid)
+    elif path=='/api/server-backup':
+     name=server_backup('manual'); return self.respond({'ok':True,'name':name})
+    elif path=='/api/server-restore':
+     name=str(d.get('name','')); restore_server_backup(name); return self.respond({'ok':True})
     elif path=='/api/import-excel':
      encoded=d.get('file_base64')
      if not isinstance(encoded,str):raise ValueError('File mancante')
