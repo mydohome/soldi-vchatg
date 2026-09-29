@@ -16,11 +16,11 @@ case "${1:-users}" in
     cp -a Dockerfile compose.yaml setup.sh update.sh backup.sh static app.py "$TMP/" 2>/dev/null || true
     [ -f compose.override.yaml ] && cp compose.override.yaml "$TMP/"
     [ -f .env ] && cp .env "$TMP/"
-    docker cp "$CID:/data/backups/$DBFILE" "$TMP/$DBFILE"
+    docker cp "$CID:/backups/$DBFILE" "$TMP/$DBFILE"
     tar -czf "/tmp/DR-$STAMP.tgz" -C "$TMP" .
-    docker cp "/tmp/DR-$STAMP.tgz" "$CID:/data/backups/DR-$STAMP.tgz"
+    docker cp "/tmp/DR-$STAMP.tgz" "$CID:/backups/DR-$STAMP.tgz"
     rm -rf "$TMP" "/tmp/DR-$STAMP.tgz"
-    docker exec "$CID" sh -c "ls -1t /data/backups/DR-*.tgz 2>/dev/null | tail -n +5 | xargs -r rm -f; ls -1t /data/backups/DR-*.sqlite3 2>/dev/null | tail -n +5 | xargs -r rm -f"
+    docker exec "$CID" sh -c "ls -1t /backups/DR-*.tgz 2>/dev/null | tail -n +5 | xargs -r rm -f; ls -1t /backups/DR-*.sqlite3 2>/dev/null | tail -n +5 | xargs -r rm -f"
     echo "DR-$STAMP.tgz"
     ;;
   *) echo "Uso: $0 [users|dr]" >&2; exit 2 ;;
