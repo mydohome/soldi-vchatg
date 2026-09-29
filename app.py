@@ -65,32 +65,71 @@ def datecheck(s):
 def export_data(c,uid):
  return {'version':1,'accounts':[dict(x) for x in c.execute('SELECT id,name,opening_cents FROM accounts WHERE user_id=?',(uid,))], 'categories':[dict(x) for x in c.execute('SELECT id,name,kind FROM categories WHERE user_id=?',(uid,))], 'recurrences':[dict(x) for x in c.execute('SELECT * FROM recurrences WHERE user_id=?',(uid,))], 'entries':[dict(x) for x in c.execute('SELECT * FROM entries WHERE user_id=?',(uid,))], 'skipped_recurrences':[dict(x) for x in c.execute('SELECT recurrence_id,date FROM skipped_recurrences WHERE user_id=?',(uid,))]}
 
+def safe_label(s):
+ return ''.join(ch if ch.isalnum() or ch in ('-','_') else '_' for ch in str(s))[:80]
+
+def user_backup(uid,username,scheduled=False):
+ stamp=now().strftime('%Y%m%d-%H%M%S')
+ label=safe_label(username)
+ path=BACKUPS/f'{label}-{stamp}.json'
+ with connect() as c: payload=export_data(c,uid)
+ payload['backup_user']=username; payload['backup_user_id']=uid; payload['created_at']=now().isoformat()
+ path.write_text(json.dumps(payload,ensure_ascii=False,indent=2),encoding='utf-8')
+ if scheduled:
+  old=sorted(BACKUPS.glob(f'{label}-*.json'),key=lambda p:p.stat().st_mtime,reverse=True)
+  for p in old[7:]: p.unlink(missing_ok=True)
+ return path.name
+
+def scheduled_user_backups():
+ made=[]
+ with connect() as c: users=c.execute('SELECT id,username FROM users ORDER BY id').fetchall()
+ for u in users: made.append(user_backup(u['id'],u['username'],True))
+ return made
+
 def server_backup(kind='manual'):
- if kind not in ('manual','scheduled','pre-restore'): raise ValueError('Tipo backup non valido')
+ if kind not in ('manual','scheduled','pre-restore','DR'): raise ValueError('Tipo backup non valido')
  stamp=now().strftime('%Y%m%d-%H%M%S-%f')
- path=BACKUPS/f'{kind}-{stamp}.sqlite3'
+ prefix='DR' if kind=='DR' else kind
+ path=BACKUPS/f'{prefix}-{stamp}.sqlite3'
  src=connect()
  try:
   dst=sqlite3.connect(path)
   try: src.backup(dst)
   finally: dst.close()
  finally: src.close()
+ if kind=='DR':
+  old=sorted(BACKUPS.glob('DR-*.sqlite3'),key=lambda p:p.stat().st_mtime,reverse=True)
+  for p in old[4:]: p.unlink(missing_ok=True)
  return path.name
 
-def server_backups():
+def server_backups(uid=None,username=None,admin=False):
  items=[]
- for p in BACKUPS.glob('*.sqlite3'):
+ for p in BACKUPS.iterdir():
+  if not p.is_file() or p.suffix not in ('.sqlite3','.json','.tgz'): continue
   try:
-   st=p.stat(); kind=p.name.split('-',1)[0]
-   if p.name.startswith('pre-restore-'): kind='pre-restore'
-   items.append({'name':p.name,'kind':kind,'size':st.st_size,'created_at':dt.datetime.fromtimestamp(st.st_mtime,TZ).isoformat()})
+   st=p.stat()
+   if p.name.startswith('DR-'): kind='DR'; label='DR'
+   elif p.suffix=='.json':
+    label=p.name.rsplit('-',2)[0]; kind='user'
+    if not admin and label!=safe_label(username): continue
+   elif p.name.startswith('pre-restore-'): kind='pre-restore'; label='DR'
+   elif p.name.startswith('manual-'): kind='manual'; label='DR'
+   else: continue
+   if kind in ('DR','pre-restore','manual') and not admin: continue
+   items.append({'name':p.name,'kind':kind,'label':label,'size':st.st_size,'created_at':dt.datetime.fromtimestamp(st.st_mtime,TZ).isoformat()})
   except OSError: pass
  return sorted(items,key=lambda x:x['created_at'],reverse=True)
 
-def restore_server_backup(name):
- if Path(name).name!=name or not name.endswith('.sqlite3'): raise ValueError('Backup non valido')
+def restore_server_backup(name,uid,username,admin=False):
+ if Path(name).name!=name: raise ValueError('Backup non valido')
  path=BACKUPS/name
  if not path.is_file(): raise ValueError('Backup non trovato')
+ if path.suffix=='.json':
+  label=path.name.rsplit('-',2)[0]
+  if not admin and label!=safe_label(username): raise ValueError('Permesso negato')
+  return json.loads(path.read_text(encoding='utf-8'))
+ if not admin: raise ValueError('Permesso negato')
+ if path.suffix!='.sqlite3': raise ValueError('Backup DR non ripristinabile dalla webapp')
  check=sqlite3.connect(path)
  try:
   if check.execute('PRAGMA integrity_check').fetchone()[0]!='ok': raise ValueError('Backup SQLite non integro')
@@ -101,6 +140,7 @@ def restore_server_backup(name):
  src=sqlite3.connect(path); dst=connect()
  try: src.backup(dst); dst.commit()
  finally: src.close(); dst.close()
+ return None
 
 def excel_template(c,uid):
  wb=Workbook(); ws=wb.active; ws.title='Movimenti'
@@ -189,7 +229,7 @@ class Handler(BaseHTTPRequestHandler):
     entries=[dict(x) for x in c.execute('SELECT e.*,a.name account_name,k.name category_name FROM entries e JOIN accounts a ON a.id=e.account_id JOIN categories k ON k.id=e.category_id WHERE e.user_id=? ORDER BY e.date DESC,e.id DESC',(uid,))]
     return self.respond({'user':{'id':uid,'username':u['username'],'admin':bool(u['admin'])},'accounts':[dict(x) for x in c.execute('SELECT * FROM accounts WHERE user_id=? ORDER BY name',(uid,))],'categories':[dict(x) for x in c.execute('SELECT * FROM categories WHERE user_id=? ORDER BY name',(uid,))],'entries':entries,'recurrences':[dict(x) for x in c.execute('SELECT * FROM recurrences WHERE user_id=? ORDER BY id DESC',(uid,))],'users':[dict(x) for x in c.execute('SELECT id,username,email,admin FROM users ORDER BY id')] if u['admin'] else [],'today':today().isoformat()})
    if path=='/api/export':return self.respond(export_data(c,uid))
-   if path=='/api/server-backups':return self.respond(server_backups())
+   if path=='/api/server-backups':return self.respond(server_backups(uid,u['username'],bool(u['admin'])))
    if path=='/api/suggest':
     q=parse_qs(urlparse(self.path).query).get('q',[''])[0].strip().lower()[:100]
     if len(q)<2:return self.respond([])
@@ -236,9 +276,11 @@ class Handler(BaseHTTPRequestHandler):
      if len(username)<3 or len(password)<12:raise ValueError('Nome minimo 3 caratteri e password minimo 12 caratteri')
      cur=c.execute('INSERT INTO users(username,email,passhash) VALUES (?,?,?)',(username,email,hashpass(password)));seed(c,cur.lastrowid)
     elif path=='/api/server-backup':
-     name=server_backup('manual'); return self.respond({'ok':True,'name':name})
+     name=user_backup(uid,u['username']); return self.respond({'ok':True,'name':name})
     elif path=='/api/server-restore':
-     name=str(d.get('name','')); restore_server_backup(name); return self.respond({'ok':True})
+     name=str(d.get('name','')); payload=restore_server_backup(name,uid,u['username'],bool(u['admin']))
+     if payload is None:return self.respond({'ok':True,'scope':'DR'})
+     d=payload; path='/api/restore'
     elif path=='/api/import-excel':
      encoded=d.get('file_base64')
      if not isinstance(encoded,str):raise ValueError('File mancante')
