@@ -8,7 +8,7 @@ from openpyxl.styles import Font, PatternFill
 from openpyxl.worksheet.datavalidation import DataValidation
 
 ROOT=Path(__file__).parent; DATA=Path(os.getenv('DATA_DIR','/data')); DATA.mkdir(parents=True,exist_ok=True)
-DB=DATA/'spese.sqlite3'; BACKUPS=DATA/'backups'; BACKUPS.mkdir(parents=True,exist_ok=True); COOKIE='spese_session'; TZ=ZoneInfo(os.getenv('TZ','Europe/Rome'))
+DB=DATA/'spese.sqlite3'; BACKUPS=Path(os.getenv('BACKUP_DIR','/backups')); BACKUPS.mkdir(parents=True,exist_ok=True); COOKIE='spese_session'; TZ=ZoneInfo(os.getenv('TZ','Europe/Rome'))
 COOKIE_FLAGS='; HttpOnly; SameSite=Lax; Path=/' + ('' if os.getenv('DEPLOY_MODE')=='lan-http' else '; Secure')
 def now(): return dt.datetime.now(TZ)
 def today(): return now().date()
@@ -115,6 +115,16 @@ def restore_server_backup(name,uid,username,admin=False):
  path=BACKUPS/name; label=path.name.rsplit('-',2)[0]
  if label!=safe_label(username) or not path.is_file(): raise ValueError('Backup non trovato')
  return json.loads(path.read_text(encoding='utf-8'))
+
+def restore_user_data(c,uid,d):
+ c.execute('DELETE FROM skipped_recurrences WHERE user_id=?',(uid,)); c.execute('DELETE FROM entries WHERE user_id=?',(uid,)); c.execute('DELETE FROM recurrences WHERE user_id=?',(uid,)); c.execute('DELETE FROM categories WHERE user_id=?',(uid,)); c.execute('DELETE FROM accounts WHERE user_id=?',(uid,))
+ accounts={}; categories={}; recs={}
+ for x in d.get('accounts',[]): accounts[x['id']]=c.execute('INSERT INTO accounts(user_id,name,opening_cents) VALUES (?,?,?)',(uid,str(x['name'])[:80],int(x.get('opening_cents',0)))).lastrowid
+ for x in d.get('categories',[]): categories[x['id']]=c.execute('INSERT INTO categories(user_id,name,kind) VALUES (?,?,?)',(uid,str(x['name'])[:80],x['kind'])).lastrowid
+ for x in d.get('recurrences',[]):
+  recs[x['id']]=c.execute('INSERT INTO recurrences(user_id,account_id,category_id,kind,scope,amount_cents,description,day,start_month,occurrences,active,created_at) VALUES (?,?,?,?,?,?,?,?,?,?,?,?)',(uid,accounts[x['account_id']],categories[x['category_id']],x['kind'],x['scope'],x['amount_cents'],str(x['description'])[:160],x['day'],x['start_month'],x.get('occurrences'),x.get('active',1),x['created_at'])).lastrowid
+ for x in d.get('entries',[]): c.execute('INSERT INTO entries(user_id,account_id,category_id,kind,scope,amount_cents,description,date,recurrence_id,created_at) VALUES (?,?,?,?,?,?,?,?,?,?)',(uid,accounts[x['account_id']],categories[x['category_id']],x['kind'],x['scope'],x['amount_cents'],str(x['description'])[:160],x['date'],recs.get(x.get('recurrence_id')),x['created_at']))
+ for x in d.get('skipped_recurrences',[]): c.execute('INSERT INTO skipped_recurrences(user_id,recurrence_id,date) VALUES (?,?,?)',(uid,recs[x['recurrence_id']],x['date']))
 
 def excel_template(c,uid):
  wb=Workbook(); ws=wb.active; ws.title='Movimenti'
@@ -253,8 +263,8 @@ class Handler(BaseHTTPRequestHandler):
      name=user_backup(uid,u['username']); return self.respond({'ok':True,'name':name})
     elif path=='/api/server-restore':
      name=str(d.get('name','')); payload=restore_server_backup(name,uid,u['username'],bool(u['admin']))
-     if payload is None:return self.respond({'ok':True,'scope':'DR'})
-     return self.respond({'ok':True,'scope':'user','data':payload})
+     user_backup(uid,u['username']); restore_user_data(c,uid,payload); c.commit()
+     return self.respond({'ok':True,'scope':'user'})
     elif path=='/api/import-excel':
      encoded=d.get('file_base64')
      if not isinstance(encoded,str):raise ValueError('File mancante')
