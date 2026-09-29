@@ -101,6 +101,21 @@ else
 fi
 
 docker compose up -d --remove-orphans
+
+# Backup automatici: utenti ogni giorno alle 02:15, DR ogni domenica alle 03:15.
+CRON_FILE="/etc/cron.d/soldi-vchatg"
+if [ -w /etc/cron.d ] || [ "$(id -u)" -eq 0 ]; then
+  project_dir=$(pwd)
+  {
+    echo 'SHELL=/bin/sh'
+    printf '15 2 * * * root cd "%s" && ./backup.sh users >> /var/log/soldi-vchatg-backup.log 2>&1\n' "$project_dir"
+    printf '15 3 * * 0 root cd "%s" && ./backup.sh dr >> /var/log/soldi-vchatg-backup.log 2>&1\n' "$project_dir"
+  } > "$CRON_FILE"
+  chmod 644 "$CRON_FILE"
+  echo 'Backup automatici configurati: utenti giornalieri (7 copie), DR settimanale (4 copie).'
+else
+  echo 'ATTENZIONE: impossibile scrivere /etc/cron.d. Configura manualmente backup.sh users e backup.sh dr.'
+fi
 echo 'Attendo il controllo di integrità...'
 i=0
 while [ "$i" -lt 12 ]; do
