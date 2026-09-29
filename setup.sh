@@ -4,6 +4,7 @@ cd "$(dirname "$0")"
 command -v docker >/dev/null 2>&1 || { echo 'Docker non trovato'; exit 1; }
 docker compose version >/dev/null 2>&1 || { echo 'Docker Compose non trovato'; exit 1; }
 command -v python3 >/dev/null 2>&1 || { echo 'Python 3 non trovato (necessario per verificare le porte)'; exit 1; }
+chmod +x setup.sh update.sh backup.sh manage_user.sh restore_dr.sh 2>/dev/null || true
 
 port_available() {
   python3 - "$1" <<'PY'
