@@ -103,44 +103,18 @@ def server_backup(kind='manual'):
  return path.name
 
 def server_backups(uid=None,username=None,admin=False):
- items=[]
- for p in BACKUPS.iterdir():
-  if not p.is_file() or p.suffix not in ('.sqlite3','.json','.tgz'): continue
+ items=[]; label=safe_label(username)
+ for p in BACKUPS.glob(f'{label}-*.json'):
   try:
-   st=p.stat()
-   if p.name.startswith('DR-'): kind='DR'; label='DR'
-   elif p.suffix=='.json':
-    label=p.name.rsplit('-',2)[0]; kind='user'
-    if not admin and label!=safe_label(username): continue
-   elif p.name.startswith('pre-restore-'): kind='pre-restore'; label='DR'
-   elif p.name.startswith('manual-'): kind='manual'; label='DR'
-   else: continue
-   if kind in ('DR','pre-restore','manual') and not admin: continue
-   items.append({'name':p.name,'kind':kind,'label':label,'size':st.st_size,'created_at':dt.datetime.fromtimestamp(st.st_mtime,TZ).isoformat()})
+   st=p.stat(); items.append({'name':p.name,'kind':'user','label':username,'size':st.st_size,'created_at':dt.datetime.fromtimestamp(st.st_mtime,TZ).isoformat()})
   except OSError: pass
  return sorted(items,key=lambda x:x['created_at'],reverse=True)
 
 def restore_server_backup(name,uid,username,admin=False):
- if Path(name).name!=name: raise ValueError('Backup non valido')
- path=BACKUPS/name
- if not path.is_file(): raise ValueError('Backup non trovato')
- if path.suffix=='.json':
-  label=path.name.rsplit('-',2)[0]
-  if not admin and label!=safe_label(username): raise ValueError('Permesso negato')
-  return json.loads(path.read_text(encoding='utf-8'))
- if not admin: raise ValueError('Permesso negato')
- if path.suffix!='.sqlite3': raise ValueError('Backup DR non ripristinabile dalla webapp')
- check=sqlite3.connect(path)
- try:
-  if check.execute('PRAGMA integrity_check').fetchone()[0]!='ok': raise ValueError('Backup SQLite non integro')
-  tables={x[0] for x in check.execute("SELECT name FROM sqlite_master WHERE type='table'")}
-  if not {'users','accounts','categories','entries','recurrences'}.issubset(tables): raise ValueError('Backup non compatibile')
- finally: check.close()
- server_backup('pre-restore')
- src=sqlite3.connect(path); dst=connect()
- try: src.backup(dst); dst.commit()
- finally: src.close(); dst.close()
- return None
+ if Path(name).name!=name or not name.endswith('.json'): raise ValueError('Backup utente non valido')
+ path=BACKUPS/name; label=path.name.rsplit('-',2)[0]
+ if label!=safe_label(username) or not path.is_file(): raise ValueError('Backup non trovato')
+ return json.loads(path.read_text(encoding='utf-8'))
 
 def excel_template(c,uid):
  wb=Workbook(); ws=wb.active; ws.title='Movimenti'
